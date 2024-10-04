@@ -116,17 +116,7 @@ func (rf *Raft) sendAllAppendEntries(heartBeat bool) {
 				PrevLogIndex: rf.nextIndex[server] - 1,
 				Entries:      make([]Entry, len(rf.log[rf.nextIndex[server]:])),
 			}
-			if !heartBeat { // heartbeat 不需要发送日志
-				args = AppendEntriesArgs{
-					Term:         rf.currentTerm,
-					LeaderId:     rf.me,
-					PrevLogIndex: rf.nextIndex[server] - 1,
-					PrevLogTerm:  rf.log[rf.nextIndex[server]-1].Term,
-					Entries:      make([]Entry, len(rf.log[rf.nextIndex[server]:])),
-					LeaderCommit: rf.commitIndex,
-				}
-				copy(args.Entries, rf.log[rf.nextIndex[server]:])
-			}
+			copy(args.Entries, rf.log[rf.nextIndex[server]:])
 			rf.mu.Unlock()
 			reply := AppendEntriesReply{}
 			if rf.killed() {

@@ -114,7 +114,7 @@ func (rf *Raft) sendAllAppendEntries(heartBeat bool) {
 				LeaderCommit: rf.commitIndex,
 				PrevLogTerm:  rf.log[rf.nextIndex[server]-1].Term,
 				PrevLogIndex: rf.nextIndex[server] - 1,
-				Entries:      make([]Entry, 0),
+				Entries:      make([]Entry, len(rf.log[rf.nextIndex[server]:])),
 			}
 			if !heartBeat { // heartbeat 不需要发送日志
 				args = AppendEntriesArgs{
@@ -191,10 +191,7 @@ func (rf *Raft) sendAllAppendEntries(heartBeat bool) {
 				goto AGAIN
 			} else {
 				rf.mu.Lock()
-				rf.nextIndex[server]-- // feat: 在论文中可以用二分法加快速度，但是raft作者觉得这是没有必要的，本来发生概率就会非常小
-				if rf.nextIndex[server] < 1 {
-					rf.nextIndex[server] = 1
-				}
+				rf.nextIndex[server] = max(1, rf.nextIndex[server]-1) // feat: 在论文中可以用二分法加快速度，但是raft作者觉得这是没有必要的，本来发生概率就会非常小
 				DPrintf("[%d] [%d] %d append entries failed, retry\n", rf.me, rf.currentTerm, server)
 				heartBeat = false
 				rf.mu.Unlock()

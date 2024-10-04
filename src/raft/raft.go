@@ -197,7 +197,7 @@ func (rf *Raft) ticker() {
 				rf.FollowerStartElection()
 			}
 		}
-		time.Sleep(30 * time.Millisecond) // 降低心跳频率，心跳频率太高会过不了RPC检测
+		time.Sleep(70 * time.Millisecond) // 降低心跳频率，心跳频率太高会过不了RPC检测
 	}
 }
 

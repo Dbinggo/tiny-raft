@@ -61,6 +61,7 @@ func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
 	DPrintf("[%d] 7 lock success!", rf.me)
 	defer rf.mu.Unlock()
+	DPrintf("[%d] [%d] state %d, commitedIndex %d , applyIndex %d , log %v ", rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.log)
 
 	var term int
 	var isleader bool
@@ -179,7 +180,7 @@ func (rf *Raft) killed() bool {
 
 func (rf *Raft) ticker() {
 	for rf.killed() == false {
-		DPrintf("[%d] [%d] state %d, commitedIndex %d , applyIndex %d  ", rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied)
+		DPrintf("[%d] [%d] state %d, commitedIndex %d , applyIndex %d , log %v ", rf.me, rf.currentTerm, rf.state, rf.commitIndex, rf.lastApplied, rf.log)
 		switch rf.state {
 		case Leader:
 			rf.sendAllAppendEntries(true)
@@ -196,7 +197,6 @@ func (rf *Raft) ticker() {
 				rf.FollowerStartElection()
 			}
 		}
-
 		time.Sleep(10 * time.Millisecond)
 	}
 }

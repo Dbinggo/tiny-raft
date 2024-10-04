@@ -33,9 +33,10 @@ func (rf *Raft) AppendEntriesRPC(args *AppendEntriesArgs, reply *AppendEntriesRe
 	// lock
 	rf.mu.Lock()
 	//DPrintf("[%d] 5 lock success!", rf.me)
+	DPrintf("[%d] term %d receive append entries from %d, now logs %v，args %v", rf.me, args.Term, args.LeaderId, rf.log, args)
 	defer rf.mu.Unlock()
 	defer func() {
-		DPrintf("[%d] term %d append entries from %d, success %v", rf.me, args.Term, args.LeaderId, reply.Success)
+		DPrintf("[%d] term %d append entries from %d, success %v , now logs %v", rf.me, args.Term, args.LeaderId, reply.Success, rf.log)
 	}()
 	if rf.killed() {
 		return
@@ -57,16 +58,17 @@ func (rf *Raft) AppendEntriesRPC(args *AppendEntriesArgs, reply *AppendEntriesRe
 	//whose term matches prevLogTerm
 	if args.PrevLogIndex >= len(rf.log) || rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 		reply.Success = false
+		DPrintf("[%d] [%d] log doesn't contain an entry at prevLogIndex %d , log %v , args log %v", rf.me, rf.currentTerm, args.PrevLogIndex, rf.log, args.Entries)
 		reply.Term = rf.currentTerm
 		return
+	} else if len(args.Entries) != 0 {
+		//If an existing entry conflicts with a new one (same index
+		//but different terms), delete the existing entry and all that
+		//follow it (§5.3)
+		reply.Success = true
+		rf.log = rf.log[:args.PrevLogIndex+1] // delete the existing entry
 	}
-	//If an existing entry conflicts with a new one (same index
-	//but different terms), delete the existing entry and all that
-	//follow it (§5.3)
-	if rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
-		rf.log = rf.log[:args.PrevLogIndex] // delete the existing entry
-		DPrintf("[%d] [%d] delete the existing entry", rf.me, rf.currentTerm)
-	}
+
 	//  Append any new entries not already in the log
 	if len(args.Entries) > 0 {
 		rf.appendEntries(args.Entries...)
@@ -86,6 +88,7 @@ func (rf *Raft) AppendEntriesRPC(args *AppendEntriesArgs, reply *AppendEntriesRe
 	return
 }
 func (rf *Raft) sendAppendEntries(sever int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
+	DPrintf("[%d] [%d] send append entries to %d , args %v", rf.me, rf.currentTerm, sever, args)
 	ok := rf.peers[sever].Call("Raft.AppendEntriesRPC", args, reply)
 	return ok
 }
@@ -98,37 +101,46 @@ func (rf *Raft) sendAllAppendEntries(heartBeat bool) {
 			rf.resetElectionTimeout()
 			continue
 		}
-		var args = AppendEntriesArgs{
-			Term:         rf.currentTerm,
-			LeaderId:     rf.me,
-			LeaderCommit: rf.commitIndex,
-		}
-		if !heartBeat { // heartbeat 不需要发送日志
-			args = AppendEntriesArgs{
-				Term:         rf.currentTerm,
-				PrevLogIndex: rf.nextIndex[i] - 1,
-				PrevLogTerm:  rf.log[rf.nextIndex[i]-1].Term,
-				Entries:      rf.log[rf.nextIndex[i]:],
-				LeaderCommit: rf.commitIndex,
-			}
-		}
 
-		reply := AppendEntriesReply{}
 		go func(server int) {
 		AGAIN:
+			rf.mu.Lock()
+			var args = AppendEntriesArgs{
+				Term:         rf.currentTerm,
+				LeaderId:     rf.me,
+				LeaderCommit: rf.commitIndex,
+			}
+			if !heartBeat { // heartbeat 不需要发送日志
+				args = AppendEntriesArgs{
+					Term:         rf.currentTerm,
+					PrevLogIndex: rf.nextIndex[server] - 1,
+					PrevLogTerm:  rf.log[rf.nextIndex[server]-1].Term,
+					Entries:      make([]Entry, len(rf.log[rf.nextIndex[server]:])),
+					LeaderCommit: rf.commitIndex,
+				}
+				copy(args.Entries, rf.log[rf.nextIndex[server]:])
+			}
+			rf.mu.Unlock()
+			reply := AppendEntriesReply{}
 			if rf.killed() {
 				DPrintf("[%d] killed", rf.me)
 				return
 			}
+			if rf.state != Leader {
+				return
+			}
 			ok := rf.sendAppendEntries(server, &args, &reply)
-			if ok && !heartBeat {
+			if !ok {
+				return
+			}
+			if reply.Success {
 				rf.mu.Lock()
 				DPrintf("[%d] 6 lock success!", rf.me)
-				defer rf.mu.Unlock()
-				if !heartBeat && reply.Success {
+				if !heartBeat {
 					// 更新 nextIndex 和 matchIndex
 					rf.nextIndex[server] = args.PrevLogIndex + len(args.Entries) + 1 // 下一个要发送的日志
 					rf.matchIndex[server] = rf.nextIndex[server] - 1                 // 已经复制的日志
+					DPrintf("[%d] [%d] %d append entries success, nextIndex %v, matchIndex %v\n", rf.me, rf.currentTerm, server, rf.nextIndex, rf.matchIndex)
 					counter.Add(1)
 					if counter.Load() > int32(len(rf.peers)/2) { // 大多数的服务器都复制了日志
 						DPrintf("[%d] [%d] update commitIndex\n", rf.me, rf.currentTerm)
@@ -149,20 +161,27 @@ func (rf *Raft) sendAllAppendEntries(heartBeat bool) {
 						}
 
 					}
-				} else if reply.Term > rf.currentTerm {
-					// 如果 AppendEntries 失败，减少 nextIndex 并重试
-
-					DPrintf("[%d] [%d] %d 在新的term，更新term，结束\n", rf.me, rf.currentTerm, server)
-					rf.currentTerm = reply.Term
-					rf.state = Follower
-					rf.votedFor = -1
-					rf.persist()
-				} else {
-					rf.nextIndex[server]-- // feat: 在论文中可以用二分法加快速度，但是raft作者觉得这是没有必要的，本来发生概率就会非常小
-					DPrintf("[%d] [%d] %d append entries failed, retry\n", rf.me, rf.currentTerm, server)
-					goto AGAIN // 重试
 				}
-
+				rf.mu.Unlock()
+			} else if reply.Term > rf.currentTerm {
+				rf.mu.Lock()
+				// 如果 AppendEntries 失败，减少 nextIndex 并重试
+				DPrintf("[%d] [%d] %d 在新的term，更新term，结束\n", rf.me, rf.currentTerm, server)
+				rf.currentTerm = reply.Term
+				rf.state = Follower
+				rf.votedFor = -1
+				rf.persist()
+				rf.mu.Unlock()
+			} else {
+				rf.mu.Lock()
+				rf.nextIndex[server]-- // feat: 在论文中可以用二分法加快速度，但是raft作者觉得这是没有必要的，本来发生概率就会非常小
+				if rf.nextIndex[server] < 1 {
+					rf.nextIndex[server] = 1
+				}
+				DPrintf("[%d] [%d] %d append entries failed, retry\n", rf.me, rf.currentTerm, server)
+				heartBeat = false
+				rf.mu.Unlock()
+				goto AGAIN // 重试
 			}
 		}(i)
 	}

@@ -133,8 +133,9 @@ func (rf *Raft) candidateElection(server int, args *RequestVoteArgs, countVotes 
 			rf.leaderId = rf.me
 			rf.state = Leader
 			rf.resetElectionTimeout()
-			rf.sendAllAppendEntries(true)
+
 			rf.resetLeaderState()
+			rf.sendAllAppendEntries(false)
 		})
 	}
 

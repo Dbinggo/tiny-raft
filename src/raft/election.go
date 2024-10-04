@@ -46,6 +46,7 @@ func (rf *Raft) FollowerStartElection() {
 }
 
 func (rf *Raft) resetLeaderState() {
+	DPrintf("[%d] reset leader state，rf.nextIndex = %d", rf.me, len(rf.log))
 	rf.nextIndex = make([]int, len(rf.peers))
 	rf.matchIndex = make([]int, len(rf.peers))
 	for i := range rf.nextIndex {

@@ -44,6 +44,7 @@ func (rf *Raft) AppendEntriesRPC(args *AppendEntriesArgs, reply *AppendEntriesRe
 	// Reply false if term < currentTerm
 	if args.Term < rf.currentTerm {
 		reply.Success = false
+		DPrintf("[%d] [%d] term < currentTerm", rf.me, rf.currentTerm)
 		reply.Term = rf.currentTerm
 		return
 	}
@@ -58,7 +59,7 @@ func (rf *Raft) AppendEntriesRPC(args *AppendEntriesArgs, reply *AppendEntriesRe
 	//whose term matches prevLogTerm
 	if args.PrevLogIndex >= len(rf.log) || rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
 		reply.Success = false
-		DPrintf("[%d] [%d] log doesn't contain an entry at prevLogIndex %d , log %v , args log %v", rf.me, rf.currentTerm, args.PrevLogIndex, rf.log, args.Entries)
+		DPrintf("[%d] [%d] log doesn't contain an entry at prevLogIndex %d , log %v , args log %v", rf.me, rf.currentTerm, args.PrevLogIndex, rf.log, args)
 		reply.Term = rf.currentTerm
 		return
 	} else if len(args.Entries) != 0 {
@@ -67,6 +68,8 @@ func (rf *Raft) AppendEntriesRPC(args *AppendEntriesArgs, reply *AppendEntriesRe
 		//follow it (§5.3)
 		reply.Success = true
 		rf.log = rf.log[:args.PrevLogIndex+1] // delete the existing entry
+	} else if len(args.Entries) == 0 {
+
 	}
 
 	//  Append any new entries not already in the log
@@ -109,10 +112,14 @@ func (rf *Raft) sendAllAppendEntries(heartBeat bool) {
 				Term:         rf.currentTerm,
 				LeaderId:     rf.me,
 				LeaderCommit: rf.commitIndex,
+				PrevLogTerm:  rf.log[rf.nextIndex[server]-1].Term,
+				PrevLogIndex: rf.nextIndex[server] - 1,
+				Entries:      make([]Entry, 0),
 			}
 			if !heartBeat { // heartbeat 不需要发送日志
 				args = AppendEntriesArgs{
 					Term:         rf.currentTerm,
+					LeaderId:     rf.me,
 					PrevLogIndex: rf.nextIndex[server] - 1,
 					PrevLogTerm:  rf.log[rf.nextIndex[server]-1].Term,
 					Entries:      make([]Entry, len(rf.log[rf.nextIndex[server]:])),
@@ -133,7 +140,7 @@ func (rf *Raft) sendAllAppendEntries(heartBeat bool) {
 			if !ok {
 				return
 			}
-			if reply.Success {
+			if reply.Success && !heartBeat {
 				rf.mu.Lock()
 				DPrintf("[%d] 6 lock success!", rf.me)
 				if !heartBeat {
@@ -172,6 +179,16 @@ func (rf *Raft) sendAllAppendEntries(heartBeat bool) {
 				rf.votedFor = -1
 				rf.persist()
 				rf.mu.Unlock()
+			} else if heartBeat && reply.Success && args.PrevLogIndex != len(rf.log)-1 {
+				// 主动触发更新
+				// todo 这个是一个奇怪的东西，我想通过心跳主动触发节点的更新，最后想到了这个办法，来主动触发更新
+				DPrintf("[%d] [%d] %d heartbeat success\n", rf.me, rf.currentTerm, server)
+				rf.mu.Lock()
+				rf.nextIndex[server] = len(rf.log)
+				rf.matchIndex[server] = 0
+				rf.mu.Unlock()
+				heartBeat = false
+				goto AGAIN
 			} else {
 				rf.mu.Lock()
 				rf.nextIndex[server]-- // feat: 在论文中可以用二分法加快速度，但是raft作者觉得这是没有必要的，本来发生概率就会非常小

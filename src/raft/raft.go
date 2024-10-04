@@ -111,6 +111,7 @@ func (rf *Raft) readPersist(data []byte) {
 		rf.currentTerm = term
 		rf.votedFor = votedFor
 		rf.log = log
+		rf.persist()
 		rf.mu.Unlock()
 		DPrintf("[%d] readPersist success", rf.me)
 	}
@@ -230,7 +231,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	DPrintf("[%d] start", rf.me)
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
-
+	rf.nextIndex = make([]int, len(peers))
+	rf.matchIndex = make([]int, len(peers))
 	// start ticker goroutine to start elections
 	go rf.ticker()
 	go rf.applyMsg()

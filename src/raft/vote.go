@@ -114,6 +114,7 @@ func (rf *Raft) candidateElection(server int, args *RequestVoteArgs, countVotes 
 	if reply.Term > args.Term {
 		DPrintf("[%d] [%d] %d 在新的term，更新term，结束\n", rf.me, args.Term, server)
 		rf.currentTerm = reply.Term
+		rf.persist()
 		return
 	}
 	if reply.Term < args.Term {
